@@ -1,0 +1,61 @@
+name: Backend Deployment
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+env:
+  PROJECT_ID: your-gcp-project-id
+  REGION: us-central1
+  SERVICE_NAME: myapp-backend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Setup gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker gcr.io --quiet
+
+      - name: Build & Push Docker image
+        run: |
+          IMAGE=gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          docker build -t $IMAGE ./backend
+          docker push $IMAGE
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Deploy to Cloud Run
+        run: |
+          if [[ "${GITHUB_REF##*/}" == "main" ]]; then
+            ENV="prod"
+          else
+            ENV="staging"
+          fi
+
+          gcloud run deploy "${{ env.SERVICE_NAME }}-$ENV" \
+            --image $IMAGE \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --project ${{ env.PROJECT_ID }}
+
+      - name: Print deployed URL
+        run: |
+          gcloud run services describe "${{ env.SERVICE_NAME }}-$ENV" \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)'
